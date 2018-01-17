@@ -26,13 +26,25 @@ import logging
 import time
 import json
 import uuid
+from urllib.parse import urlparse
+from datetime import datetime
 
 # Imports for v3 validation
 from validation import validate_message
 
+import boto3
+from boto3.dynamodb.conditions import Attr
 # Setup logger
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+logging.getLogger('boto3').setLevel(logging.WARNING)
+logging.getLogger('botocore').setLevel(logging.WARNING)
+logging.getLogger('nose').setLevel(logging.WARNING)
+
+# Get the service resource.
+DYNAMODB = boto3.resource('dynamodb')
+USERS_TABLE = DYNAMODB.Table('users')
 
 # To simplify this sample Lambda, we omit validation of access tokens and retrieval of a specific
 # user's appliances. Instead, this array includes a variety of virtual appliances in v2 API syntax,
@@ -216,7 +228,7 @@ def handle_non_discovery_v3(request):
                 "endpoint": {
                     "scope": {
                         "type": "BearerToken",
-                        "token": "access-token-from-Amazon"
+                        "token": request['directive']['endpoint']['scope']['token']
                     },
                     "endpointId": request["directive"]["endpoint"]["endpointId"]
                 },
@@ -233,7 +245,7 @@ def handle_non_discovery_v3(request):
                         "namespace": "Alexa.Authorization",
                         "name": "AcceptGrant.Response",
                         "payloadVersion": "3",
-                        "messageId": "5f8a426e-01e4-4cc9-8b79-65f8bd0fd8a4"
+                        "messageId": get_uuid()
                     },
                     "payload": {}
                 }
@@ -244,6 +256,32 @@ def handle_non_discovery_v3(request):
         if request_name == "InitializeCameraStreams":
             value = "OK"
 
+        # very important to keep this token a secret in every layer
+        bearer_token = request['directive']['endpoint']['scope']['token']
+        user = USERS_TABLE.scan(FilterExpression=Attr(
+            'stream_token').eq(bearer_token)).get('Items')
+        if not user:
+            return {
+                "event": {
+                    "header": {
+                        "namespace": "Alexa",
+                        "name": "ErrorResponse",
+                        "messageId": get_uuid(),
+                        "correlationToken": request['directive']['header']['correlationToken'],
+                        "payloadVersion": "3"
+                    },
+                    "endpoint": {
+                        "endpointId": "endpoint-001"
+                    },
+                    "payload": {
+                        "type": "INVALID_AUTHORIZATION_CREDENTIAL",
+                        "message": "Unable to reach endpoint 01 because the authorization was incorrect!"
+                    }
+                }
+            }
+        user = user[0]
+        client_endpoint = urlparse(user['client_endpoint']['url'])
+
         response = {
             "context": {
                 "properties": [
@@ -253,7 +291,7 @@ def handle_non_discovery_v3(request):
                         "value": {
                             "value": "OK"
                         },
-                        "timeOfSample": "2017-09-27T18:30:30.45Z",
+                        "timeOfSample": datetime.now().isoformat(),
                         "uncertaintyInMilliseconds": 200
                     }
                 ]
@@ -263,33 +301,36 @@ def handle_non_discovery_v3(request):
                     "namespace": "Alexa.CameraStreamController",
                     "name": "Response",
                     "payloadVersion": "3",
-                    "messageId": "5f8a426e-01e4-4cc9-8b79-65f8bd0fd8a4",
-                    "correlationToken": "dFMb0z+PgpgdDmluhJ1LddFvSqZ/jCc8ptlAKulUj90jSqg=="
+                    "messageId": get_uuid(),
+                    "correlationToken": request['directive']['header']['correlationToken']
                 },
                 "endpoint": {
                     "scope": {
                         "type": "BearerToken",
-                        "token": "access-token-from-Amazon"
+                        "token": bearer_token
                     },
                     "endpointId": "endpoint-001"
                 },
                 "payload": {
                     "cameraStreams": [
                         {
-                            "uri": "rtsp://username:password@link.to.video:443/feed1.mp4",
-                            "expirationTime": "2017-09-27T20:30:30.45Z",
+                            "uri": 'rtsp://{0}:5444/live'.format(client_endpoint.hostname),
+                            "expirationTime": "2019-09-27T20:30:30.45Z",
                             "idleTimeoutSeconds": 30,
                             "protocol": "RTSP",
                             "resolution": {
-                                "width": 1920,
-                                "height": 1080
+                                "width": 640,
+                                "height": 480
                             },
                             "authorizationType": "BASIC",
                             "videoCodec": "H264",
                             "audioCodec": "AAC"
                         }
                     ],
-                    "imageUri": "https://username:password@link.to.image/image.jpg"
+                    "imageUri": "http://{0}:{1}@{2}:{3}/frame".format(user['client_endpoint']['username'],
+                                                                      user['client_endpoint']['password'],
+                                                                      client_endpoint.hostname,
+                                                                      client_endpoint.port)
                 }
             }
         }
