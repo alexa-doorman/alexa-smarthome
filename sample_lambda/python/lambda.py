@@ -195,7 +195,6 @@ def handle_discovery_v3(request):
 
 
 def handle_non_discovery_v3(request):
-    print('handle_non_discovery_v3', request)
     request_namespace = request["directive"]["header"]["namespace"]
     request_name = request["directive"]["header"]["name"]
 
@@ -408,7 +407,7 @@ def get_capabilities_from_v2_appliance(appliance):
                 "cameraStreamConfigurations": [{
                     "protocols": ["RTSP"],
                     "resolutions": [{"width": 640, "height": 480}],
-                    "authorizationTypes": ["BEARER"],
+                    "authorizationTypes": ["NONE"],
                     "videoCodecs": ["H264"],
                     "audioCodecs": ["AAC"]
                 }]
