@@ -36,7 +36,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr
 # Setup logger
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.WARNING)
 
 logging.getLogger('boto3').setLevel(logging.WARNING)
 logging.getLogger('botocore').setLevel(logging.WARNING)
@@ -102,6 +102,8 @@ def lambda_handler(request, context):
             validate_message(request, response)
 
         return response
+    except KeyError as error:
+        logger.error(error)
     except ValueError as error:
         logger.error(error)
         raise
