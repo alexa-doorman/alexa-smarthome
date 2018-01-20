@@ -52,11 +52,11 @@ USERS_TABLE = DYNAMODB.Table('users')
 APPLIANCE = [
     {
         "applianceId": "endpoint-001",
-        "manufacturerName": "exp0nge",
+        "manufacturerName": "Smart Doorman",
         "modelName": "Smart Camera",
         "version": "1",
         "friendlyName": "Smart Camera",
-        "friendlyDescription": "Camera that tells you what's there",
+        "friendlyDescription": "Camera that tells you what's there using machine learning",
         "isReachable": True,
         "actions": [
             "retrieveCameraStreamUri"
@@ -73,7 +73,8 @@ def lambda_handler(request, context):
     and transition of your existing users, this main Lambda handler must be modified to support
     both v2 and v3 requests.
     """
-
+    if 'directive' not in request:
+        return
     try:
         logger.info("Directive:")
         logger.info(json.dumps(request, indent=4, sort_keys=True))
@@ -130,7 +131,6 @@ def handle_discovery():
 
 def handle_non_discovery(request):
     request_name = request["header"]["name"]
-    print('REQUEST NAME ===> ', request_name)
 
     if request_name == "TurnOnRequest":
         header = {
@@ -199,8 +199,42 @@ def handle_discovery_v3(request):
 def handle_non_discovery_v3(request):
     request_namespace = request["directive"]["header"]["namespace"]
     request_name = request["directive"]["header"]["name"]
+    if request_namespace == "Alexa":
+        if request_name == "ReportState":
+            return {
+                "context": {
+                    "properties": [
+                        {
+                            "namespace": "Alexa.EndpointHealth",
+                            "name": "connectivity",
+                            "value": {
+                                "value": "OK"
+                            },
+                            "timeOfSample": datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+                            "uncertaintyInMilliseconds": 200
+                        },
+                    ]
+                },
+                "event": {
+                    "header": {
+                        "namespace": "Alexa",
+                        "name": "StateReport",
+                        "payloadVersion": "3",
+                        "messageId": get_uuid(),
+                        "correlationToken": request["directive"]["header"]["correlationToken"]
+                    },
+                    "endpoint": {
+                        "scope": {
+                            "type": "BearerToken",
+                            "token": request['directive']['endpoint']['scope']['token']
+                        },
+                        "endpointId": "endpoint-001"
+                    },
+                    "payload": {}
+                }
+            }
 
-    if request_namespace == "Alexa.PowerController":
+    elif request_namespace == "Alexa.PowerController":
         if request_name == "TurnOn":
             value = "ON"
         else:
@@ -256,7 +290,7 @@ def handle_non_discovery_v3(request):
     elif request_namespace == "Alexa.CameraStreamController":
         if request_name == "InitializeCameraStreams":
             value = "OK"
-
+        logger.info('Attempting to lookup user')
         # very important to keep this token a secret in every layer
         bearer_token = request['directive']['endpoint']['scope']['token']
         user = USERS_TABLE.scan(FilterExpression=Attr(
@@ -282,7 +316,7 @@ def handle_non_discovery_v3(request):
             }
         user = user[0]
         client_endpoint = urlparse(user['client_endpoint']['url'])
-
+        stream_uri = 'rtsp://{0}:8554/live'.format(client_endpoint.hostname)
         response = {
             "context": {
                 "properties": [
@@ -292,7 +326,7 @@ def handle_non_discovery_v3(request):
                         "value": {
                             "value": "OK"
                         },
-                        "timeOfSample": datetime.now().isoformat(),
+                        "timeOfSample": datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
                         "uncertaintyInMilliseconds": 200
                     }
                 ]
@@ -315,17 +349,17 @@ def handle_non_discovery_v3(request):
                 "payload": {
                     "cameraStreams": [
                         {
-                            "uri": 'rtsp://{0}:5444/live'.format(client_endpoint.hostname),
+                            "uri": stream_uri,
                             "expirationTime": "2019-09-27T20:30:30.45Z",
-                            "idleTimeoutSeconds": 30,
+                            "idleTimeoutSeconds": 300,
                             "protocol": "RTSP",
                             "resolution": {
                                 "width": 640,
                                 "height": 480
                             },
-                            "authorizationType": "BASIC",
+                            "authorizationType": "NONE",
                             "videoCodec": "H264",
-                            "audioCodec": "AAC"
+                            "audioCodec": "NONE"
                         }
                     ],
                     "imageUri": "http://{0}:{1}@{2}:{3}/frame".format(user['client_endpoint']['username'],
@@ -338,7 +372,8 @@ def handle_non_discovery_v3(request):
         return response
 
     # other handlers omitted in this example
-
+    else:
+        logger.error('RESPONSE NOT IS NOT SENT %s', str(request))
 # v3 utility functions
 
 
